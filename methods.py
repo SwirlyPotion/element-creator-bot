@@ -124,7 +124,7 @@ class Method(type):
     def __new__(meta, classname, supers, classdict):
         ParamStorage.insert_into_classdict(classdict, STORAGE_NAME)
         classdict['__init__'] = Method._func_init
-        classdict['tostring'] = Method._func_tostring
+        classdict['__str__'] = Method._func_str
         return type.__new__(meta, classname, supers, classdict)
 
     @staticmethod
@@ -135,7 +135,7 @@ class Method(type):
         storage.fill_from_dict(self, kwargs)
 
     @staticmethod
-    def _func_tostring(self):
+    def _func_str(self):
         res = type(self).__name__
         params = getattr(self, STORAGE_NAME)
         if params:
