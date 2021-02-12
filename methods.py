@@ -1,89 +1,117 @@
 from collections import ChainMap
-from copy import deepcopy
+# from copy import deepcopy
 
 
 REQUIRED = False
 OPTIONAL = True
-HOLDER_NAME = 'params'
+STORAGE_NAME = 'params'
 
 
-class ReqiredParamError(Exception):
+class ReqiredParamMissing(Exception):
     pass  # TODO: MAKE THE EXCEPTION MORE SPECIFIC
 
 
+class TooManyParams(Exception):
+    pass
+
+
 class Parameter(property):
-    def __init__(self, holder, name, valtype):
-        fget = self._make_getter(holder, name)
-        fset = self._make_setter(holder, name, valtype)
-        fdel = self._make_deleter(holder, name)
+    def __init__(self, storage, name, valtype):
+        fget = self._make_getter(storage, name)
+        fset = self._make_setter(storage, name, valtype)
+        fdel = self._make_deleter(storage, name)
         doc = f'Parameter {name} of type {valtype}'
         property.__init__(self, fget, fset, fdel, doc)
 
     @staticmethod
-    def _make_getter(holder, name):
-        return lambda obj: getattr(obj, holder)[name]
+    def _make_getter(storage, name):
+        return lambda obj: getattr(type(obj), storage)[obj][name]
 
     @staticmethod
-    def _make_setter(holder, name, valtype):
+    def _make_setter(storage, name, valtype):
         def fset(obj, val):
             if type(val) == valtype:
-                getattr(obj, holder)[name] = val
+                getattr(type(obj), storage)[obj][name] = val
             else:
                 err = f'attribute {name} is {valtype} not {type(val)}'
                 raise AttributeError(err)
         return fset
 
     @staticmethod
-    def _make_deleter(holder, name):
+    def _make_deleter(storage, name):
         def fdel(obj):
-            obj_holder = getattr(obj, holder)
-            del obj_holder[name]
+            obj_storage = getattr(type(obj), storage)[obj]
+            del obj_storage[name]
         return fdel
 
 
-class ParamHolder(ChainMap):
-    def __init__(self, req, opt):
-        self.required = req
-        self.optional = opt
-        ChainMap.__init__(self, req, opt)
+class ParamIter:
+    def __init__(self, groups):
+        self.groups = groups
+
+    def __next__(self):
+        for group in self.groups:
+            for param in group:
+                yield param
+        raise StopIteration
+
+
+class ParamSignature(ChainMap):
+    def __init__(self, groups):
+        self.required = groups[0]
+        self.optional = groups[1]
+        super().__init__(groups)
+
+
+class ParamStorage(dict):
+    def __init__(self, groups):
+        self.signature = ParamSignature(groups)
+        super().__init__()
+
+    def set_obj_storage(self, obj):
+        self[obj] = {}
+
+    def get_params_view(self, obj):
+        return self[obj].items()
 
     def fill_from_dict(self, obj, kwargs):
-        for key in list(self.required):
-            val = kwargs.get(key)
-            if val is None:
-                raise ReqiredParamError('Parameter', key, 'is missing')
-            setattr(obj, key, val)
-        for key in list(self.optional):
-            val = kwargs.get(key)
+        for key in self.signature.required:
+            try:
+                val = kwargs.pop(key)
+            except KeyError:
+                raise ReqiredParamMissing(f'Parameter {key} is missing')
+            self[obj][key] = val
+        for key in self.signature.optional:
+            val = kwargs.pop(key, None)
             if val is not None:
-                setattr(obj, key, val)
-            else:
-                delattr(obj, key)
+                self[obj][key] = val
+        extra = list(kwargs.keys())
+        if extra:
+            raise TooManyParams(f'Parameters {extra} are not supported')
 
-    def __setitem__(self, key, val):
-        if key in self.required:
-            self.required[key] = val
-        else:
-            self.optional[key] = val
+    def __getitem__(self, key):
+        if not type(key) == int:
+            key = id(key)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if not type(key) == int:
+            key = id(key)
+        super().__setitem__(key, value)
 
     def __delitem__(self, key):
-        try:
-            del self.required[key]
-        except KeyError:
-            del self.optional[key]
+        if not type(key) == int:
+            key = id(key)
+        super().__delitem__(key)
 
     @classmethod
-    def fromholder(cls, holder):
-        return deepcopy(holder)
-
-    @classmethod
-    def insert_into_classdict(cls, classdict, holder_name):
+    def insert_into_classdict(cls, classdict, storage_name):
         groups = {}, {}
         for name, req, vtype in cls._collect_from_classdict(classdict):
             group = groups[req]
-            group[name] = None  # May change later to provide defaults
-            classdict[name] = Parameter(holder_name, name, vtype)
-        classdict[holder_name] = cls(*groups)
+            group[name] = vtype  # May change later to provide defaults
+            classdict[name] = Parameter(storage_name, name, vtype)
+        classdict[storage_name] = cls(groups)
 
     @staticmethod
     def _collect_from_classdict(classdict):
@@ -94,26 +122,29 @@ class ParamHolder(ChainMap):
 
 class Method(type):
     def __new__(meta, classname, supers, classdict):
-        ParamHolder.insert_into_classdict(classdict, HOLDER_NAME)
+        ParamStorage.insert_into_classdict(classdict, STORAGE_NAME)
         classdict['__init__'] = Method._func_init
-        classdict['__str__'] = Method._func_str
+        classdict['tostring'] = Method._func_tostring
         return type.__new__(meta, classname, supers, classdict)
 
     @staticmethod
     def _func_init(self, **kwargs):
-        params = ParamHolder.fromholder(getattr(type(self), HOLDER_NAME))
-        setattr(self, HOLDER_NAME, params)
-        params.fill_from_dict(self, kwargs)
+        storage = getattr(self, STORAGE_NAME)
+        storage.set_obj_storage(self)
+        setattr(self, STORAGE_NAME, storage.get_params_view(self))
+        storage.fill_from_dict(self, kwargs)
 
     @staticmethod
-    def _func_str(self):
-        res = type(self).__qualname__
-        if self.__dict__:
+    def _func_tostring(self):
+        res = type(self).__name__
+        params = getattr(self, STORAGE_NAME)
+        if params:
             res += '?'
-        data = []
-        for key, val in self.params.items():
-            data.append(f'{key}={str(val)}')
-        return res + '&'.join(data)
+            data = []
+            for key, val in params:
+                data.append(f'{key}={str(val)}')
+            res += '&'.join(data)
+        return res
 
 
 class getUpdates(metaclass=Method):
@@ -124,5 +155,7 @@ class getUpdates(metaclass=Method):
 
 
 if __name__ == '__main__':
-    request = getUpdates(offset=100, limit=3, value=100)
-    print(request)
+    request = getUpdates(offset=100,
+                         limit=3,
+                         allowed_updates=['a', 'b'])
+    print(request.tostring())
