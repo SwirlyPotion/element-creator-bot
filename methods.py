@@ -124,6 +124,7 @@ class Method(type):
     def __new__(meta, classname, supers, classdict):
         ParamStorage.insert_into_classdict(classdict, STORAGE_NAME)
         classdict['__init__'] = Method._func_init
+        classdict['__del__'] = Method._func_del
         classdict['__str__'] = Method._func_str
         return type.__new__(meta, classname, supers, classdict)
 
@@ -133,6 +134,13 @@ class Method(type):
         storage.set_obj_storage(self)
         setattr(self, STORAGE_NAME, storage.get_params_view(self))
         storage.fill_from_dict(self, kwargs)
+        object.__init__(self)
+
+    @staticmethod
+    def _func_del(self):
+        storage = getattr(type(self), STORAGE_NAME)
+        del storage[self]
+        del self
 
     @staticmethod
     def _func_str(self):
@@ -158,4 +166,7 @@ if __name__ == '__main__':
     request = getUpdates(offset=100,
                          limit=3,
                          allowed_updates=['a', 'b'])
-    print(request.tostring())
+    print(request)
+    print(getUpdates.params)
+    del request
+    print(getUpdates.params)
