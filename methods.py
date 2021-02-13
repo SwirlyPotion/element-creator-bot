@@ -154,6 +154,7 @@ class Method(type):
         return res
 
 
+# API method classes go here
 class getUpdates(metaclass=Method):
     offset = OPTIONAL, int
     limit = OPTIONAL, int
