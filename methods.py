@@ -1,5 +1,4 @@
 from collections import ChainMap
-# from copy import deepcopy
 
 
 REQUIRED = False
@@ -45,15 +44,15 @@ class Parameter(property):
         return fdel
 
 
-class ParamIter:
-    def __init__(self, groups):
-        self.groups = groups
-
-    def __next__(self):
-        for group in self.groups:
-            for param in group:
-                yield param
-        raise StopIteration
+# class ParamIter:
+#     def __init__(self, groups):
+#         self.groups = groups
+#
+#     def __next__(self):
+#         for group in self.groups:
+#             for param in group:
+#                 yield param
+#         raise StopIteration
 
 
 class ParamSignature(ChainMap):
